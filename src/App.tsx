@@ -234,15 +234,31 @@ function randomItem<T>(values: T[]) {
   return values[Math.floor(Math.random() * values.length)];
 }
 
+function shuffle<T>(values: T[]) {
+  const next = [...values];
+  for (let index = next.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [next[index], next[swapIndex]] = [next[swapIndex], next[index]];
+  }
+  return next;
+}
+
 function lessonBlock(symbols: string[]) {
   const length = 1 + Math.floor(Math.random() * 4);
-  return Array.from({ length }, () => randomItem(symbols)).join("");
+  const bag = symbols.length >= length ? shuffle(symbols) : Array.from({ length }, (_, index) => shuffle(symbols)[index % symbols.length]);
+  return bag.slice(0, length).join("");
 }
 
 function buildLessonText(symbols: string[], lineCount: number) {
-  return Array.from({ length: lineCount }, (_, lineIndex) =>
-    Array.from({ length: 8 + (lineIndex % 3) }, () => lessonBlock(symbols)).join(" "),
-  ).join("\n");
+  const lines: string[] = [];
+
+  for (let lineIndex = 0; lineIndex < lineCount; lineIndex += 1) {
+    const blockCount = 8 + Math.floor(Math.random() * 4);
+    const blocks = Array.from({ length: blockCount }, () => lessonBlock(symbols));
+    lines.push(blocks.join(" "));
+  }
+
+  return lines.join("\n");
 }
 
 function makeCampaignLessons(layout: LayoutId) {
@@ -331,11 +347,10 @@ function modeLevel(base: LevelConfig, mode: GameMode): LevelConfig {
 
 function makeWave(keySet: string[], length: number) {
   const wave: string[] = [];
-  for (let i = 0; i < length; i += 1) {
-    const drift = (i * 7 + length * 3) % keySet.length;
-    wave.push(keySet[drift]);
+  while (wave.length < length) {
+    wave.push(...Array.from(buildLessonText(keySet, 1)), "\n");
   }
-  return wave;
+  return wave.slice(0, length);
 }
 
 function loadProgress(): SavedProgress {
