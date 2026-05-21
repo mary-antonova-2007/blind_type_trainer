@@ -1318,11 +1318,11 @@ function Keyboard({
             const isSpaceKey = key.row === "space";
             const isEnterKey = key.code === "Enter";
             const isTarget =
-              (!isServiceKey(key) && symbols.some((keySymbol) => keySymbol.toLowerCase() === targetLower)) ||
+              (!isServiceKey(key) && !isSpaceKey && symbols.some((keySymbol) => keySymbol.toLowerCase() === targetLower)) ||
               (isShiftKey && key.side === shiftSide) ||
               (isSpaceKey && target === " " && (!spaceSide || key.side === spaceSide)) ||
               (isEnterKey && target === "\n");
-            const isUsed = isServiceKey(key) ? isTarget : symbols.some((keySymbol) => activeSymbols.has(keySymbol.toLowerCase()));
+            const isUsed = isServiceKey(key) || isSpaceKey ? isTarget : symbols.some((keySymbol) => activeSymbols.has(keySymbol.toLowerCase()));
             const isPulse = !isServiceKey(key) && pulse ? symbols.some((keySymbol) => keySymbol.toLowerCase() === pulse.symbol.toLowerCase()) : false;
             const style = { "--finger-color": fingerColors[key.finger] } as CSSProperties;
             const label = key.label ?? symbol;
