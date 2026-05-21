@@ -43,12 +43,30 @@ type SessionStats = {
   streak: number;
   bestStreak: number;
   startedAt: number;
+  endedAt?: number;
   completed: boolean;
 };
 
 type ChallengeLine = {
   text: string;
   start: number;
+};
+
+type ChallengeError = {
+  index: number;
+  word: string;
+  expected: string;
+  typed: string;
+};
+
+type ChallengeErrorDrill = {
+  id: string;
+  wordLines: string[];
+  symbolLine: string;
+  words: string[];
+  expected: string;
+  typed: string;
+  count: number;
 };
 
 type SavedProgress = {
@@ -241,8 +259,78 @@ function getAccuracy(stats: SessionStats) {
 }
 
 function getWpm(stats: SessionStats, now = performance.now()) {
-  const minutes = Math.max((now - stats.startedAt) / 60000, 1 / 60);
+  const minutes = Math.max(((stats.endedAt ?? now) - stats.startedAt) / 60000, 1 / 60);
   return Math.round(stats.correct / 5 / minutes);
+}
+
+function getElapsedSeconds(stats: SessionStats, now = performance.now()) {
+  return Math.max(0, ((stats.endedAt ?? now) - stats.startedAt) / 1000);
+}
+
+function getCpm(stats: SessionStats, now = performance.now()) {
+  const minutes = Math.max(getElapsedSeconds(stats, now) / 60, 1 / 60);
+  return Math.round(stats.correct / minutes);
+}
+
+function isWordChar(char: string) {
+  return /[\p{L}\p{N}-]/u.test(char);
+}
+
+function extractWordAt(text: string, index: number) {
+  if (!text[index] || !isWordChar(text[index])) return "";
+  let start = index;
+  let end = index + 1;
+  while (start > 0 && isWordChar(text[start - 1])) start -= 1;
+  while (end < text.length && isWordChar(text[end])) end += 1;
+  return text.slice(start, end);
+}
+
+function formatDrillChar(char: string) {
+  if (char === "") return "пропуск";
+  return streamChar(char);
+}
+
+function buildWordDrillLine(words: string[]) {
+  return Array.from({ length: 6 }, (_, index) => words[index % words.length]).join(" ");
+}
+
+function buildChallengeErrorDrills(errors: ChallengeError[]) {
+  const groups = new Map<string, ChallengeErrorDrill>();
+
+  errors.forEach((error) => {
+    if (error.expected === "\n") return;
+
+    const word = error.word || formatDrillChar(error.expected);
+    const id = `${error.expected}\u0000${error.typed}`;
+    const current = groups.get(id);
+    if (current) {
+      const words = current.words.includes(word) ? current.words : [...current.words, word];
+      const count = current.count + 1;
+      groups.set(id, { ...current, words, count, wordLines: Array.from({ length: Math.min(count, 4) }, () => buildWordDrillLine(words)) });
+      return;
+    }
+
+    const pair = error.expected === error.typed ? [formatDrillChar(error.expected)] : [formatDrillChar(error.expected), formatDrillChar(error.typed)];
+    const symbolLine = Array.from({ length: 8 }, (_, index) => pair[index % pair.length]).join(" ");
+
+    groups.set(id, {
+      id,
+      words: [word],
+      expected: error.expected,
+      typed: error.typed,
+      count: 1,
+      wordLines: [buildWordDrillLine([word])],
+      symbolLine,
+    });
+  });
+
+  return Array.from(groups.values())
+    .sort((a, b) => b.count - a.count || a.words[0].localeCompare(b.words[0]))
+    .slice(0, 5);
+}
+
+function buildMistakePracticeText(drills: ChallengeErrorDrill[]) {
+  return drills.flatMap((drill) => [...drill.wordLines, drill.symbolLine]).join("\n");
 }
 
 function keyForSymbol(symbol: string, layout: LayoutId) {
@@ -286,8 +374,12 @@ function challengeCpm(speedLevel: number) {
   return 40 + speedLevel * 24;
 }
 
+function normalizeChallengeText(text: string) {
+  return text.replace(/[«»]/g, '"').replace(/—/g, "-");
+}
+
 function formatDuration(seconds: number) {
-  const rounded = Math.max(1, Math.round(seconds));
+  const rounded = Math.max(0, Math.round(seconds));
   const minutes = Math.floor(rounded / 60);
   const rest = rounded % 60;
   return minutes > 0 ? `${minutes} мин ${rest.toString().padStart(2, "0")} сек` : `${rest} сек`;
@@ -355,6 +447,8 @@ export function App() {
   const [headX, setHeadX] = useState(0);
   const [pulse, setPulse] = useState<{ symbol: string; kind: PulseKind; id: number } | null>(null);
   const [message, setMessage] = useState("Выбери режим и начни волну");
+  const [clockNow, setClockNow] = useState(() => performance.now());
+  const [challengeErrors, setChallengeErrors] = useState<ChallengeError[]>([]);
   const statusRef = useRef(status);
   const levelRef = useRef<LevelConfig | null>(null);
   const queueRef = useRef<string[]>([]);
@@ -363,15 +457,17 @@ export function App() {
   const modeRef = useRef(mode);
   const effectiveSpeedRef = useRef(0);
   const challengeViewRef = useRef(challengeView);
+  const challengeErrorsRef = useRef<ChallengeError[]>([]);
 
   const unlocked = progress.unlocked[layout] ?? 1;
   const baseLevel = useMemo(() => makeLevel(layout, levelId), [layout, levelId]);
   const activeLevel = useMemo(() => modeLevel(baseLevel, mode), [baseLevel, mode]);
   const effectiveSpeed = useMemo(() => activeLevel.speed * speedMultiplier(speedLevel), [activeLevel.speed, speedLevel]);
-  const lineChallenge = useMemo(() => buildLineChallenge(challengeText), [challengeText]);
+  const normalizedChallengeText = useMemo(() => normalizeChallengeText(challengeText), [challengeText]);
+  const lineChallenge = useMemo(() => buildLineChallenge(normalizedChallengeText), [normalizedChallengeText]);
   const challengeQueue = useMemo(
-    () => (challengeView === "line" ? lineChallenge.sequence : Array.from(challengeText.replace(/\r\n/g, "\n").replace(/\r/g, "\n"))),
-    [challengeText, challengeView, lineChallenge.sequence],
+    () => (challengeView === "line" ? lineChallenge.sequence : Array.from(normalizedChallengeText.replace(/\r\n/g, "\n").replace(/\r/g, "\n"))),
+    [normalizedChallengeText, challengeView, lineChallenge.sequence],
   );
   const challengeCpmValue = challengeCpm(speedLevel);
   const challengeEstimateSeconds = challengeQueue.length > 0 ? (challengeQueue.length / challengeCpmValue) * 60 : 0;
@@ -380,6 +476,7 @@ export function App() {
   const targetKey = target ? keyForSymbol(target, layout) : undefined;
   const bestKey = `${layout}:${mode}:${levelId}`;
   const bestScore = progress.best[bestKey] ?? 0;
+  const challengeErrorDrills = useMemo(() => buildChallengeErrorDrills(challengeErrors), [challengeErrors]);
 
   useEffect(() => {
     statusRef.current = status;
@@ -398,12 +495,16 @@ export function App() {
 
   const finish = useCallback(
     (result: "won" | "lost", finalStats = statsRef.current) => {
-      const accuracy = getAccuracy(finalStats);
-      const wpm = getWpm(finalStats);
-      const score = finalStats.score;
+      const endedAt = performance.now();
       const completed = result === "won";
+      const finishedStats = { ...finalStats, endedAt, completed };
+      const accuracy = getAccuracy(finalStats);
+      const wpm = getWpm(finishedStats);
+      const score = finalStats.score;
       setStatus(result);
-      setStats({ ...finalStats, completed });
+      statsRef.current = finishedStats;
+      setStats(finishedStats);
+      setClockNow(endedAt);
       setMessage(completed ? "Волна очищена. Отличная работа." : "Лимит ошибок исчерпан. Перезапусти волну.");
       setProgress((current) => {
         const nextUnlocked =
@@ -437,6 +538,18 @@ export function App() {
         const current = queueRef.current[0];
         if (!current) return;
         const nextQueue = queueRef.current.slice(1);
+        if (modeRef.current === "challenge") {
+          const index = challengeQueue.length - queueRef.current.length;
+          const error: ChallengeError = {
+            index,
+            word: extractWordAt(normalizedChallengeText, index),
+            expected: current,
+            typed: "",
+          };
+          const nextErrors = [...challengeErrorsRef.current, error];
+          challengeErrorsRef.current = nextErrors;
+          setChallengeErrors(nextErrors);
+        }
         const nextStats = {
           ...statsRef.current,
           typed: statsRef.current.typed + 1,
@@ -454,7 +567,7 @@ export function App() {
         else if (nextQueue.length === 0) finish("won", nextStats);
       }
     },
-    [finish],
+    [challengeQueue.length, finish, normalizedChallengeText],
   );
 
   useEffect(() => {
@@ -468,6 +581,12 @@ export function App() {
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
   }, [step]);
+
+  useEffect(() => {
+    if (status !== "running") return;
+    const timer = window.setInterval(() => setClockNow(performance.now()), 500);
+    return () => window.clearInterval(timer);
+  }, [status]);
 
   useEffect(() => {
     window.advanceTime = (ms: number) => {
@@ -511,6 +630,9 @@ export function App() {
       return;
     }
     const nextStats = newStats();
+    challengeErrorsRef.current = [];
+    setChallengeErrors([]);
+    setClockNow(nextStats.startedAt);
     setQueue(nextQueue);
     setStats(nextStats);
     setHeadX(100);
@@ -521,6 +643,28 @@ export function App() {
     headXRef.current = 100;
   }, [activeLevel, challengeQueue, mode]);
 
+  const startMistakePractice = useCallback(() => {
+    const mistakeText = buildMistakePracticeText(challengeErrorDrills);
+    const nextQueue = buildLineChallenge(normalizeChallengeText(mistakeText)).sequence;
+    if (nextQueue.length === 0) return;
+
+    const nextStats = newStats();
+    setChallengeText(mistakeText);
+    setChallengeView("line");
+    challengeErrorsRef.current = [];
+    setChallengeErrors([]);
+    setClockNow(nextStats.startedAt);
+    setQueue(nextQueue);
+    setStats(nextStats);
+    setHeadX(0);
+    setStatus("running");
+    setMessage("Отрабатываем ошибки");
+    queueRef.current = nextQueue;
+    statsRef.current = nextStats;
+    headXRef.current = 0;
+    challengeViewRef.current = "line";
+  }, [challengeErrorDrills]);
+
   const handleInput = useCallback(
     (rawKey: string) => {
       if (statusRef.current !== "running") return;
@@ -530,6 +674,18 @@ export function App() {
       const expectedRaw = queueRef.current[0];
       if (!expectedRaw) return;
       const isCorrect = modeRef.current === "challenge" ? normalized === expectedRaw : key === expectedRaw.toLowerCase();
+      if (!isCorrect && modeRef.current === "challenge") {
+        const index = challengeQueue.length - queueRef.current.length;
+        const error: ChallengeError = {
+          index,
+          word: extractWordAt(normalizedChallengeText, index),
+          expected: expectedRaw,
+          typed: normalized,
+        };
+        const nextErrors = [...challengeErrorsRef.current, error];
+        challengeErrorsRef.current = nextErrors;
+        setChallengeErrors(nextErrors);
+      }
       const symbol = isCorrect ? queueRef.current[0] : normalized;
       const nextQueue = isCorrect ? queueRef.current.slice(1) : queueRef.current;
       const nextStreak = isCorrect ? statsRef.current.streak + 1 : 0;
@@ -552,7 +708,7 @@ export function App() {
       if (!isCorrect && modeRef.current !== "challenge" && nextStats.errors > activeLevel.errorLimit) finish("lost", nextStats);
       else if (isCorrect && nextQueue.length === 0) finish("won", nextStats);
     },
-    [activeLevel.errorLimit, finish],
+    [activeLevel.errorLimit, challengeQueue.length, finish, normalizedChallengeText],
   );
 
   useEffect(() => {
@@ -580,6 +736,8 @@ export function App() {
     setLevelId(1);
     setStatus("idle");
     setQueue([]);
+    challengeErrorsRef.current = [];
+    setChallengeErrors([]);
     setMessage("Раскладка изменена");
   };
 
@@ -587,6 +745,8 @@ export function App() {
     setMode(nextMode);
     setStatus("idle");
     setQueue([]);
+    challengeErrorsRef.current = [];
+    setChallengeErrors([]);
     setMessage(nextMode === "challenge" ? "Вставь текст и запускай challenge" : "Режим готов");
   };
 
@@ -595,14 +755,23 @@ export function App() {
     setLevelId(nextLevel);
     setStatus("idle");
     setQueue([]);
+    challengeErrorsRef.current = [];
+    setChallengeErrors([]);
     setMessage(`Выбран уровень ${nextLevel}`);
   };
 
   const visibleQueue = queue.slice(0, isChallenge ? 26 : 18);
-  const displayWpm = getWpm(stats);
+  const displayWpm = getWpm(stats, clockNow);
   const remainingErrors = Math.max(0, activeLevel.errorLimit - stats.errors + 1);
   const canResume = status === "paused";
   const challengeProgress = isChallenge && challengeQueue.length > 0 ? Math.round((stats.correct / challengeQueue.length) * 100) : 0;
+  const challengeElapsedSeconds = isChallenge && status !== "idle" ? getElapsedSeconds(stats, clockNow) : 0;
+  const challengeLiveCpm = isChallenge && status !== "idle" ? getCpm(stats, clockNow) : 0;
+  const challengeSummary =
+    isChallenge && (status === "won" || status === "lost")
+      ? `Средний темп ${challengeLiveCpm} зн/мин · время ${formatDuration(challengeElapsedSeconds)}`
+      : null;
+  const showChallengeErrorWork = isChallenge && (status === "won" || status === "lost") && challengeErrorDrills.length > 0;
   const currentLineIndex = lineChallenge.lines.reduce((active, line, index) => (stats.correct >= line.start ? index : active), 0);
   const shellClassName = ["app-shell", isChallenge && challengeView === "line" ? "line-challenge-shell" : ""].join(" ");
 
@@ -675,6 +844,8 @@ export function App() {
                   setChallengeView("stream");
                   setStatus("idle");
                   setQueue([]);
+                  challengeErrorsRef.current = [];
+                  setChallengeErrors([]);
                 }}
               >
                 Поток
@@ -686,6 +857,8 @@ export function App() {
                   setChallengeView("line");
                   setStatus("idle");
                   setQueue([]);
+                  challengeErrorsRef.current = [];
+                  setChallengeErrors([]);
                   setHeadX(0);
                 }}
               >
@@ -698,6 +871,8 @@ export function App() {
                 setChallengeText(event.currentTarget.value);
                 setStatus("idle");
                 setQueue([]);
+                challengeErrorsRef.current = [];
+                setChallengeErrors([]);
               }}
               placeholder="Вставь любой текст: строки, пробелы, цифры, знаки препинания..."
               rows={4}
@@ -705,8 +880,9 @@ export function App() {
           </label>
           <div className="challenge-analysis">
             <Metric label="Символы" value={challengeQueue.length.toString()} />
-            <Metric label="Темп" value={`${challengeCpmValue} зн/мин`} />
-            <Metric label="Время" value={challengeQueue.length ? formatDuration(challengeEstimateSeconds) : "0 сек"} />
+            <Metric label="Темп сейчас" value={`${challengeLiveCpm} зн/мин`} />
+            <Metric label="Время набора" value={formatDuration(challengeElapsedSeconds)} />
+            <Metric label="Расчет" value={challengeQueue.length ? formatDuration(challengeEstimateSeconds) : "0 сек"} />
             <Metric label="Прогресс" value={`${challengeProgress}%`} />
           </div>
         </section>
@@ -735,7 +911,7 @@ export function App() {
           {status !== "running" && (
             <div className="arena-message">
               <strong>{status === "won" ? (isChallenge ? "Challenge завершен" : "Уровень пройден") : status === "lost" ? "Волна сорвалась" : message}</strong>
-              <span>{status === "idle" ? "Enter запускает волну" : "Нажми старт, чтобы продолжить"}</span>
+              <span>{challengeSummary ?? (status === "idle" ? "Enter запускает волну" : "Нажми старт, чтобы продолжить")}</span>
             </div>
           )}
         </div>
@@ -754,7 +930,7 @@ export function App() {
           <strong>{activeLevel.label}</strong>
           <span>
             {isChallenge
-              ? `${challengeQueue.length} символов · ${challengeCpmValue} зн/мин · ${formatDuration(challengeEstimateSeconds)}`
+              ? `${stats.correct}/${challengeQueue.length} символов · ${challengeLiveCpm} зн/мин · ${formatDuration(challengeElapsedSeconds)}`
               : `${activeLevel.keySet.join(" ")} · темп ${effectiveSpeed.toFixed(1)} · запас ${remainingErrors}`}
           </span>
         </div>
@@ -773,6 +949,40 @@ export function App() {
           )}
         </div>
       </section>
+
+      {showChallengeErrorWork && (
+        <section className="mistake-work" aria-label="Работа над ошибками">
+          <div className="mistake-work-head">
+            <div>
+              <strong>Работа над ошибками</strong>
+              <span>
+                {challengeErrors.length} {challengeErrors.length === 1 ? "ошибка" : "ошибок"} · сначала слово, потом проблемная пара
+              </span>
+            </div>
+            <span>
+              <button className="primary" type="button" onClick={startMistakePractice}>
+                Отработать ошибки
+              </button>
+            </span>
+          </div>
+          <div className="mistake-drills">
+            {challengeErrorDrills.map((drill) => (
+              <article className="mistake-drill" key={drill.id}>
+                <div>
+                  <strong>{drill.words.join(", ")}</strong>
+                  <span>
+                    надо {formatDrillChar(drill.expected)} · нажато {formatDrillChar(drill.typed)} · {drill.count}x
+                  </span>
+                </div>
+                {drill.wordLines.map((line, index) => (
+                  <pre key={`${drill.id}-word-${index}`}>{line}</pre>
+                ))}
+                <pre>{drill.symbolLine}</pre>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
 
       <Keyboard layout={layout} target={target} pulse={pulse} />
 

@@ -504,6 +504,74 @@ h1 {
   gap: 4px;
 }
 
+.mistake-work {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid rgba(240, 138, 69, 0.28);
+  border-radius: 8px;
+  background: rgba(240, 138, 69, 0.06);
+}
+
+.mistake-work-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mistake-work-head div {
+  display: grid;
+  gap: 4px;
+}
+
+.mistake-work-head button {
+  min-height: 34px;
+  border: 1px solid rgba(127, 216, 202, 0.86);
+  border-radius: 8px;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
+.mistake-work-head span,
+.mistake-drill span {
+  color: rgba(237, 247, 245, 0.64);
+  font-size: 13px;
+}
+
+.mistake-drills {
+  display: grid;
+  gap: 10px;
+}
+
+.mistake-drill {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(237, 247, 245, 0.12);
+  border-radius: 8px;
+  background: rgba(7, 16, 19, 0.48);
+}
+
+.mistake-drill div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mistake-drill pre {
+  margin: 0;
+  overflow-x: auto;
+  border-radius: 6px;
+  background: rgba(237, 247, 245, 0.06);
+  padding: 8px 10px;
+  color: #edf7f5;
+  font: 700 15px/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  white-space: pre;
+}
+
 .ghost {
   background: rgba(237, 247, 245, 0.07);
 }
@@ -661,6 +729,12 @@ h1 {
   .app-shell {
     width: min(100vw - 20px, 1180px);
     padding-top: 18px;
+  }
+
+  .mistake-work-head,
+  .mistake-drill div {
+    align-items: start;
+    flex-direction: column;
   }
 
   .mode-tabs {
