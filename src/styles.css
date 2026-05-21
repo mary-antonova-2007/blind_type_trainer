@@ -665,10 +665,14 @@ h1 {
 }
 
 .row-1 {
-  padding-left: 28px;
+  padding-left: 18px;
 }
 
 .row-2 {
+  padding-left: 28px;
+}
+
+.row-3 {
   padding-left: 62px;
 }
 
@@ -718,8 +722,22 @@ h1 {
 }
 
 .space-key {
-  width: min(420px, 52vw);
+  width: min(210px, 26vw);
   aspect-ratio: auto;
+}
+
+.shift-key,
+.enter-key {
+  width: clamp(74px, 8vw, 104px);
+  aspect-ratio: auto;
+}
+
+.enter-key {
+  width: clamp(70px, 7.4vw, 92px);
+}
+
+.number-key {
+  font-size: clamp(14px, 2.2vw, 20px);
 }
 
 .home-key::after {

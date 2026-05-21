@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 type LayoutId = "en-US" | "ru-RU";
 type GameMode = "campaign" | "practice" | "sprint" | "accuracy" | "challenge" | "endless";
 type FingerId =
+  | "service"
   | "left-pinky"
   | "left-ring"
   | "left-middle"
@@ -12,7 +13,7 @@ type FingerId =
   | "right-middle"
   | "right-ring"
   | "right-pinky";
-type KeyRow = "top" | "home" | "bottom" | "space";
+type KeyRow = "number" | "top" | "home" | "bottom" | "space";
 type GameStatus = "idle" | "running" | "paused" | "won" | "lost";
 type PulseKind = "success" | "fail";
 type ChallengeViewMode = "stream" | "line";
@@ -21,9 +22,13 @@ type KeyDefinition = {
   code: string;
   en: string;
   ru: string;
+  enShift?: string;
+  ruShift?: string;
   row: KeyRow;
   finger: FingerId;
   home?: boolean;
+  label?: string;
+  side?: "left" | "right";
 };
 
 type LevelConfig = {
@@ -82,8 +87,11 @@ type SavedProgress = {
 const STORAGE_KEY = "typing-arcade-progress-v1";
 const ENDLESS_START_X = 260;
 const ENDLESS_SYMBOL_STEP = 72;
+const ENDLESS_PIXEL_SPEED = 24;
+const ENDLESS_CATCHUP_LIMIT = 2.4;
 
 const fingerLabels: Record<FingerId, string> = {
+  service: "Служебная клавиша",
   "left-pinky": "Левый мизинец",
   "left-ring": "Левый безымянный",
   "left-middle": "Левый средний",
@@ -96,6 +104,7 @@ const fingerLabels: Record<FingerId, string> = {
 };
 
 const fingerColors: Record<FingerId, string> = {
+  service: "#9aa8ad",
   "left-pinky": "#e8557d",
   "left-ring": "#f08a45",
   "left-middle": "#e2b84d",
@@ -109,45 +118,66 @@ const fingerColors: Record<FingerId, string> = {
 
 const keyboardRows: KeyDefinition[][] = [
   [
-    { code: "KeyQ", en: "q", ru: "й", row: "top", finger: "left-pinky" },
-    { code: "KeyW", en: "w", ru: "ц", row: "top", finger: "left-ring" },
-    { code: "KeyE", en: "e", ru: "у", row: "top", finger: "left-middle" },
-    { code: "KeyR", en: "r", ru: "к", row: "top", finger: "left-index" },
-    { code: "KeyT", en: "t", ru: "е", row: "top", finger: "left-index" },
-    { code: "KeyY", en: "y", ru: "н", row: "top", finger: "right-index" },
-    { code: "KeyU", en: "u", ru: "г", row: "top", finger: "right-index" },
-    { code: "KeyI", en: "i", ru: "ш", row: "top", finger: "right-middle" },
-    { code: "KeyO", en: "o", ru: "щ", row: "top", finger: "right-ring" },
-    { code: "KeyP", en: "p", ru: "з", row: "top", finger: "right-pinky" },
-    { code: "BracketLeft", en: "[", ru: "х", row: "top", finger: "right-pinky" },
-    { code: "BracketRight", en: "]", ru: "ъ", row: "top", finger: "right-pinky" },
+    { code: "Backquote", en: "`", enShift: "~", ru: "е", ruShift: "Е", row: "number", finger: "left-pinky" },
+    { code: "Digit1", en: "1", enShift: "!", ru: "1", ruShift: "!", row: "number", finger: "left-pinky" },
+    { code: "Digit2", en: "2", enShift: "@", ru: "2", ruShift: '"', row: "number", finger: "left-ring" },
+    { code: "Digit3", en: "3", enShift: "#", ru: "3", ruShift: "№", row: "number", finger: "left-middle" },
+    { code: "Digit4", en: "4", enShift: "$", ru: "4", ruShift: ";", row: "number", finger: "left-index" },
+    { code: "Digit5", en: "5", enShift: "%", ru: "5", ruShift: "%", row: "number", finger: "left-index" },
+    { code: "Digit6", en: "6", enShift: "^", ru: "6", ruShift: ":", row: "number", finger: "right-index" },
+    { code: "Digit7", en: "7", enShift: "&", ru: "7", ruShift: "?", row: "number", finger: "right-index" },
+    { code: "Digit8", en: "8", enShift: "*", ru: "8", ruShift: "*", row: "number", finger: "right-middle" },
+    { code: "Digit9", en: "9", enShift: "(", ru: "9", ruShift: "(", row: "number", finger: "right-ring" },
+    { code: "Digit0", en: "0", enShift: ")", ru: "0", ruShift: ")", row: "number", finger: "right-pinky" },
+    { code: "Minus", en: "-", enShift: "_", ru: "-", ruShift: "_", row: "number", finger: "right-pinky" },
+    { code: "Equal", en: "=", enShift: "+", ru: "=", ruShift: "+", row: "number", finger: "right-pinky" },
   ],
   [
-    { code: "KeyA", en: "a", ru: "ф", row: "home", finger: "left-pinky", home: true },
-    { code: "KeyS", en: "s", ru: "ы", row: "home", finger: "left-ring", home: true },
-    { code: "KeyD", en: "d", ru: "в", row: "home", finger: "left-middle", home: true },
-    { code: "KeyF", en: "f", ru: "а", row: "home", finger: "left-index", home: true },
-    { code: "KeyG", en: "g", ru: "п", row: "home", finger: "left-index" },
-    { code: "KeyH", en: "h", ru: "р", row: "home", finger: "right-index" },
-    { code: "KeyJ", en: "j", ru: "о", row: "home", finger: "right-index", home: true },
-    { code: "KeyK", en: "k", ru: "л", row: "home", finger: "right-middle", home: true },
-    { code: "KeyL", en: "l", ru: "д", row: "home", finger: "right-ring", home: true },
-    { code: "Semicolon", en: ";", ru: "ж", row: "home", finger: "right-pinky", home: true },
-    { code: "Quote", en: "'", ru: "э", row: "home", finger: "right-pinky" },
+    { code: "KeyQ", en: "q", enShift: "Q", ru: "й", ruShift: "Й", row: "top", finger: "left-pinky" },
+    { code: "KeyW", en: "w", enShift: "W", ru: "ц", ruShift: "Ц", row: "top", finger: "left-ring" },
+    { code: "KeyE", en: "e", enShift: "E", ru: "у", ruShift: "У", row: "top", finger: "left-middle" },
+    { code: "KeyR", en: "r", enShift: "R", ru: "к", ruShift: "К", row: "top", finger: "left-index" },
+    { code: "KeyT", en: "t", enShift: "T", ru: "е", ruShift: "Е", row: "top", finger: "left-index" },
+    { code: "KeyY", en: "y", enShift: "Y", ru: "н", ruShift: "Н", row: "top", finger: "right-index" },
+    { code: "KeyU", en: "u", enShift: "U", ru: "г", ruShift: "Г", row: "top", finger: "right-index" },
+    { code: "KeyI", en: "i", enShift: "I", ru: "ш", ruShift: "Ш", row: "top", finger: "right-middle" },
+    { code: "KeyO", en: "o", enShift: "O", ru: "щ", ruShift: "Щ", row: "top", finger: "right-ring" },
+    { code: "KeyP", en: "p", enShift: "P", ru: "з", ruShift: "З", row: "top", finger: "right-pinky" },
+    { code: "BracketLeft", en: "[", enShift: "{", ru: "х", ruShift: "Х", row: "top", finger: "right-pinky" },
+    { code: "BracketRight", en: "]", enShift: "}", ru: "ъ", ruShift: "Ъ", row: "top", finger: "right-pinky" },
+    { code: "Enter", en: "\n", ru: "\n", row: "top", finger: "service", label: "Enter" },
   ],
   [
-    { code: "KeyZ", en: "z", ru: "я", row: "bottom", finger: "left-pinky" },
-    { code: "KeyX", en: "x", ru: "ч", row: "bottom", finger: "left-ring" },
-    { code: "KeyC", en: "c", ru: "с", row: "bottom", finger: "left-middle" },
-    { code: "KeyV", en: "v", ru: "м", row: "bottom", finger: "left-index" },
-    { code: "KeyB", en: "b", ru: "и", row: "bottom", finger: "left-index" },
-    { code: "KeyN", en: "n", ru: "т", row: "bottom", finger: "right-index" },
-    { code: "KeyM", en: "m", ru: "ь", row: "bottom", finger: "right-index" },
-    { code: "Comma", en: ",", ru: "б", row: "bottom", finger: "right-middle" },
-    { code: "Period", en: ".", ru: "ю", row: "bottom", finger: "right-ring" },
-    { code: "Slash", en: "/", ru: ".", row: "bottom", finger: "right-pinky" },
+    { code: "KeyA", en: "a", enShift: "A", ru: "ф", ruShift: "Ф", row: "home", finger: "left-pinky", home: true },
+    { code: "KeyS", en: "s", enShift: "S", ru: "ы", ruShift: "Ы", row: "home", finger: "left-ring", home: true },
+    { code: "KeyD", en: "d", enShift: "D", ru: "в", ruShift: "В", row: "home", finger: "left-middle", home: true },
+    { code: "KeyF", en: "f", enShift: "F", ru: "а", ruShift: "А", row: "home", finger: "left-index", home: true },
+    { code: "KeyG", en: "g", enShift: "G", ru: "п", ruShift: "П", row: "home", finger: "left-index" },
+    { code: "KeyH", en: "h", enShift: "H", ru: "р", ruShift: "Р", row: "home", finger: "right-index" },
+    { code: "KeyJ", en: "j", enShift: "J", ru: "о", ruShift: "О", row: "home", finger: "right-index", home: true },
+    { code: "KeyK", en: "k", enShift: "K", ru: "л", ruShift: "Л", row: "home", finger: "right-middle", home: true },
+    { code: "KeyL", en: "l", enShift: "L", ru: "д", ruShift: "Д", row: "home", finger: "right-ring", home: true },
+    { code: "Semicolon", en: ";", enShift: ":", ru: "ж", ruShift: "Ж", row: "home", finger: "right-pinky", home: true },
+    { code: "Quote", en: "'", enShift: '"', ru: "э", ruShift: "Э", row: "home", finger: "right-pinky" },
   ],
-  [{ code: "Space", en: " ", ru: " ", row: "space", finger: "thumbs", home: true }],
+  [
+    { code: "ShiftLeft", en: "", ru: "", row: "bottom", finger: "service", label: "Shift", side: "left" },
+    { code: "KeyZ", en: "z", enShift: "Z", ru: "я", ruShift: "Я", row: "bottom", finger: "left-pinky" },
+    { code: "KeyX", en: "x", enShift: "X", ru: "ч", ruShift: "Ч", row: "bottom", finger: "left-ring" },
+    { code: "KeyC", en: "c", enShift: "C", ru: "с", ruShift: "С", row: "bottom", finger: "left-middle" },
+    { code: "KeyV", en: "v", enShift: "V", ru: "м", ruShift: "М", row: "bottom", finger: "left-index" },
+    { code: "KeyB", en: "b", enShift: "B", ru: "и", ruShift: "И", row: "bottom", finger: "left-index" },
+    { code: "KeyN", en: "n", enShift: "N", ru: "т", ruShift: "Т", row: "bottom", finger: "right-index" },
+    { code: "KeyM", en: "m", enShift: "M", ru: "ь", ruShift: "Ь", row: "bottom", finger: "right-index" },
+    { code: "Comma", en: ",", enShift: "<", ru: "б", ruShift: "Б", row: "bottom", finger: "right-middle" },
+    { code: "Period", en: ".", enShift: ">", ru: "ю", ruShift: "Ю", row: "bottom", finger: "right-ring" },
+    { code: "Slash", en: "/", enShift: "?", ru: ".", ruShift: ",", row: "bottom", finger: "right-pinky" },
+    { code: "ShiftRight", en: "", ru: "", row: "bottom", finger: "service", label: "Shift", side: "right" },
+  ],
+  [
+    { code: "SpaceLeft", en: " ", ru: " ", row: "space", finger: "thumbs", label: "Space", side: "left", home: true },
+    { code: "SpaceRight", en: " ", ru: " ", row: "space", finger: "thumbs", label: "Space", side: "right", home: true },
+  ],
 ];
 
 const modes: Array<{ id: GameMode; label: string; description: string }> = [
@@ -172,20 +202,60 @@ function symbolForKey(key: KeyDefinition, layout: LayoutId) {
   return layout === "en-US" ? key.en : key.ru;
 }
 
+function shiftedSymbolForKey(key: KeyDefinition, layout: LayoutId) {
+  return layout === "en-US" ? key.enShift : key.ruShift;
+}
+
 function getAllKeys() {
   return keyboardRows.flat();
 }
 
+function isServiceKey(key: KeyDefinition) {
+  return key.finger === "service";
+}
+
+function handForFinger(finger: FingerId) {
+  if (finger.startsWith("left")) return "left";
+  if (finger.startsWith("right")) return "right";
+  return undefined;
+}
+
+function keySymbols(key: KeyDefinition, layout: LayoutId) {
+  return [symbolForKey(key, layout), shiftedSymbolForKey(key, layout)].filter((symbol): symbol is string => Boolean(symbol));
+}
+
+function findKeyForSymbol(symbol: string, layout: LayoutId) {
+  if (symbol === " ") return getAllKeys().find((key) => key.row === "space");
+  return getAllKeys().find((key) => !isServiceKey(key) && keySymbols(key, layout).some((keySymbol) => keySymbol.toLowerCase() === symbol.toLowerCase()));
+}
+
+function isShiftSymbol(symbol: string, layout: LayoutId) {
+  return getAllKeys().some((key) => shiftedSymbolForKey(key, layout) === symbol);
+}
+
+function requiredShiftSide(symbol: string, layout: LayoutId) {
+  if (!isShiftSymbol(symbol, layout)) return undefined;
+  const key = findKeyForSymbol(symbol, layout);
+  const hand = key ? handForFinger(key.finger) : undefined;
+  return hand === "left" ? "right" : hand === "right" ? "left" : undefined;
+}
+
+function requiredSpaceSide(previousSymbol: string, layout: LayoutId) {
+  const previousKey = findKeyForSymbol(previousSymbol, layout);
+  const hand = previousKey ? handForFinger(previousKey.finger) : undefined;
+  return hand === "left" ? "right" : hand === "right" ? "left" : undefined;
+}
+
 function keysByFingers(layout: LayoutId, fingers: FingerId[], rows?: KeyRow[]) {
   return getAllKeys()
-    .filter((key) => fingers.includes(key.finger) && (!rows || rows.includes(key.row)))
+    .filter((key) => !isServiceKey(key) && fingers.includes(key.finger) && (!rows || rows.includes(key.row)))
     .map((key) => symbolForKey(key, layout))
     .filter((symbol) => symbol.trim().length > 0);
 }
 
 function getHomeKeys(layout: LayoutId) {
   return getAllKeys()
-    .filter((key) => key.row === "home")
+    .filter((key) => !isServiceKey(key) && key.row === "home")
     .map((key) => symbolForKey(key, layout))
     .filter((symbol) => symbol !== "'");
 }
@@ -216,7 +286,7 @@ function rowLabel(row: KeyRow) {
 }
 
 function keysForLessonStep(layout: LayoutId, row: KeyRow, step: (typeof practiceFingerGroups)[number]) {
-  const rowKeys = getAllKeys().filter((key) => key.row === row && step.fingers.includes(key.finger));
+  const rowKeys = getAllKeys().filter((key) => !isServiceKey(key) && key.row === row && step.fingers.includes(key.finger));
   const baseKeys =
     row === "home" && step.onlyHome
       ? rowKeys.filter((key) => key.home)
@@ -284,7 +354,7 @@ function makeCampaignLessons(layout: LayoutId) {
       ];
     });
 
-    const fullRow = unique(getAllKeys().filter((key) => key.row === row).map((key) => symbolForKey(key, layout)).filter((symbol) => symbol.trim().length > 0));
+    const fullRow = unique(getAllKeys().filter((key) => !isServiceKey(key) && key.row === row).map((key) => symbolForKey(key, layout)).filter((symbol) => symbol.trim().length > 0));
     return [
       ...steps,
       {
@@ -457,7 +527,7 @@ function buildMistakePracticeText(drills: ChallengeErrorDrill[]) {
 }
 
 function keyForSymbol(symbol: string, layout: LayoutId) {
-  return getAllKeys().find((key) => symbolForKey(key, layout).toLowerCase() === symbol.toLowerCase());
+  return findKeyForSymbol(symbol, layout);
 }
 
 function newStats(): SessionStats {
@@ -513,12 +583,12 @@ function normalizeChallengeText(text: string, layout: LayoutId) {
   const normalized = stripDiacritics(text).replace(/[«»]/g, '"').replace(/—/g, "-");
   if (layout !== "ru-RU") return normalized;
 
-  const allowedLetters = new Set(getAllKeys().map((key) => symbolForKey(key, layout)).filter((symbol) => symbol.trim().length > 0));
+  const allowedSymbols = new Set(getAllKeys().flatMap((key) => keySymbols(key, layout)).filter((symbol) => symbol.trim().length > 0));
   const chars: string[] = [];
 
   Array.from(normalized).forEach((char) => {
     const lower = char.toLowerCase();
-    if (char === " " || char === "\n" || char === "." || allowedLetters.has(lower)) {
+    if (char === " " || char === "\n" || allowedSymbols.has(char) || allowedSymbols.has(lower)) {
       chars.push(char);
     }
   });
@@ -600,7 +670,8 @@ export function App() {
   const [sessionText, setSessionText] = useState("");
   const [headX, setHeadX] = useState(0);
   const [pulse, setPulse] = useState<{ symbol: string; kind: PulseKind; id: number } | null>(null);
-  const [burst, setBurst] = useState<{ symbol: string; id: number } | null>(null);
+  const [burst, setBurst] = useState<{ symbol: string; id: number; x: number } | null>(null);
+  const [lastCorrectSymbol, setLastCorrectSymbol] = useState("");
   const [message, setMessage] = useState("Выбери режим и начни волну");
   const [clockNow, setClockNow] = useState(() => performance.now());
   const [challengeErrors, setChallengeErrors] = useState<ChallengeError[]>([]);
@@ -611,6 +682,7 @@ export function App() {
   const statsRef = useRef(stats);
   const modeRef = useRef(mode);
   const effectiveSpeedRef = useRef(0);
+  const endlessCatchupRef = useRef(1);
   const challengeViewRef = useRef(challengeView);
   const challengeErrorsRef = useRef<ChallengeError[]>([]);
 
@@ -628,6 +700,7 @@ export function App() {
   const campaignLevels = useMemo(() => campaignLevelCount(layout), [layout]);
   const sessionLines = useMemo(() => buildLineChallenge(sessionText), [sessionText]);
   const keyboardSymbols = useMemo(() => new Set(Array.from(sessionText || queue.join("")).map((symbol) => symbol.toLowerCase())), [queue, sessionText]);
+  const previousSymbol = sessionText[stats.correct - 1] ?? lastCorrectSymbol;
   const target = queue[0] ?? "";
   const targetKey = target ? keyForSymbol(target, layout) : undefined;
   const bestKey = `${layout}:${mode}:${levelId}`;
@@ -686,8 +759,10 @@ export function App() {
     (deltaMs: number) => {
       if (statusRef.current !== "running" || !levelRef.current) return;
       if (modeRef.current !== "endless") return;
-      const endlessAcceleration = 1 + Math.min(1.2, statsRef.current.correct * 0.006 + getElapsedSeconds(statsRef.current) * 0.006);
-      const nextX = headXRef.current - ((effectiveSpeedRef.current * endlessAcceleration) * deltaMs) / 1000;
+      const catchupNeed = Math.max(0, (headXRef.current - ENDLESS_START_X) / ENDLESS_SYMBOL_STEP);
+      const targetCatchup = Math.min(ENDLESS_CATCHUP_LIMIT, 1 + catchupNeed * 0.55);
+      endlessCatchupRef.current += (targetCatchup - endlessCatchupRef.current) * Math.min(1, deltaMs / 420);
+      const nextX = headXRef.current - ((effectiveSpeedRef.current * ENDLESS_PIXEL_SPEED * endlessCatchupRef.current) * deltaMs) / 1000;
       headXRef.current = nextX;
       setHeadX(nextX);
       if (nextX < -ENDLESS_SYMBOL_STEP) {
@@ -791,6 +866,7 @@ export function App() {
     setClockNow(nextStats.startedAt);
     setQueue(nextQueue);
     setSessionText(nextQueue.join(""));
+    setLastCorrectSymbol("");
     setStats(nextStats);
     const nextHeadX = mode === "endless" ? ENDLESS_START_X : 100;
     setHeadX(nextHeadX);
@@ -799,6 +875,7 @@ export function App() {
     queueRef.current = nextQueue;
     statsRef.current = nextStats;
     headXRef.current = nextHeadX;
+    endlessCatchupRef.current = 1;
   }, [activeLevel, challengeQueue, levelId, mode]);
 
   const startMistakePractice = useCallback(() => {
@@ -814,6 +891,7 @@ export function App() {
     setClockNow(nextStats.startedAt);
     setQueue(nextQueue);
     setSessionText(mistakeText);
+    setLastCorrectSymbol("");
     setStats(nextStats);
     setHeadX(0);
     setStatus("running");
@@ -864,11 +942,12 @@ export function App() {
       statsRef.current = nextStats;
       setQueue(nextQueue);
       setStats(nextStats);
+      if (isCorrect) setLastCorrectSymbol(expectedRaw);
       if (isCorrect && modeRef.current === "endless") {
+        setBurst({ symbol, id: Date.now(), x: headXRef.current });
         const recoveredX = headXRef.current + ENDLESS_SYMBOL_STEP;
         headXRef.current = recoveredX;
         setHeadX(recoveredX);
-        setBurst({ symbol, id: Date.now() });
       } else if (isCorrect) {
         headXRef.current = 100;
         setHeadX(100);
@@ -906,6 +985,7 @@ export function App() {
     setStatus("idle");
     setQueue([]);
     setSessionText("");
+    setLastCorrectSymbol("");
     challengeErrorsRef.current = [];
     setChallengeErrors([]);
     setMessage("Раскладка изменена");
@@ -916,6 +996,7 @@ export function App() {
     setStatus("idle");
     setQueue([]);
     setSessionText("");
+    setLastCorrectSymbol("");
     challengeErrorsRef.current = [];
     setChallengeErrors([]);
     setMessage(nextMode === "challenge" ? "Вставь текст и запускай challenge" : "Режим готов");
@@ -927,6 +1008,7 @@ export function App() {
     setStatus("idle");
     setQueue([]);
     setSessionText("");
+    setLastCorrectSymbol("");
     challengeErrorsRef.current = [];
     setChallengeErrors([]);
     setMessage(`Выбран уровень ${nextLevel}`);
@@ -1015,6 +1097,7 @@ export function App() {
                 setStatus("idle");
                 setQueue([]);
                 setSessionText("");
+                setLastCorrectSymbol("");
                 challengeErrorsRef.current = [];
                 setChallengeErrors([]);
               }}
@@ -1041,7 +1124,7 @@ export function App() {
             <>
               <div className="target-zone" />
               {burst && (
-                <div className="symbol-burst" key={burst.id}>
+                <div className="symbol-burst" key={burst.id} style={{ left: `${78 + burst.x}px` }}>
                   <span>{streamChar(burst.symbol)}</span>
                   <i />
                   <i />
@@ -1137,7 +1220,7 @@ export function App() {
         </section>
       )}
 
-      <Keyboard layout={layout} target={target} activeSymbols={keyboardSymbols} pulse={pulse} />
+      <Keyboard layout={layout} target={target} previousSymbol={previousSymbol} activeSymbols={keyboardSymbols} pulse={pulse} />
 
       <section className="finger-legend">
         {(Object.keys(fingerLabels) as FingerId[]).map((finger) => (
@@ -1211,31 +1294,48 @@ function ChallengeLineReader({
 function Keyboard({
   layout,
   target,
+  previousSymbol,
   activeSymbols,
   pulse,
 }: {
   layout: LayoutId;
   target: string;
+  previousSymbol: string;
   activeSymbols: Set<string>;
   pulse: { symbol: string; kind: PulseKind; id: number } | null;
 }) {
   const targetLower = target.toLowerCase();
+  const shiftSide = requiredShiftSide(target, layout);
+  const spaceSide = target === " " ? requiredSpaceSide(previousSymbol, layout) : undefined;
   return (
     <section className="keyboard" aria-label="Экранная клавиатура">
       {keyboardRows.map((row, rowIndex) => (
         <div className={`key-row row-${rowIndex}`} key={rowIndex}>
           {row.map((key) => {
             const symbol = symbolForKey(key, layout);
-            const symbolLower = symbol.toLowerCase();
-            const isTarget = symbolLower === targetLower;
-            const isUsed = activeSymbols.has(symbolLower);
-            const isPulse = pulse?.symbol.toLowerCase() === symbolLower;
+            const symbols = keySymbols(key, layout);
+            const isShiftKey = key.code === "ShiftLeft" || key.code === "ShiftRight";
+            const isSpaceKey = key.row === "space";
+            const isEnterKey = key.code === "Enter";
+            const isTarget =
+              (!isServiceKey(key) && symbols.some((keySymbol) => keySymbol.toLowerCase() === targetLower)) ||
+              (isShiftKey && key.side === shiftSide) ||
+              (isSpaceKey && target === " " && (!spaceSide || key.side === spaceSide)) ||
+              (isEnterKey && target === "\n");
+            const isUsed = isServiceKey(key) ? isTarget : symbols.some((keySymbol) => activeSymbols.has(keySymbol.toLowerCase()));
+            const isPulse = !isServiceKey(key) && pulse ? symbols.some((keySymbol) => keySymbol.toLowerCase() === pulse.symbol.toLowerCase()) : false;
             const style = { "--finger-color": fingerColors[key.finger] } as CSSProperties;
+            const label = key.label ?? symbol;
+            const display = label === "\n" ? "Enter" : label === " " ? "Space" : label;
             return (
               <div
                 className={[
                   "key",
+                  key.row === "number" ? "number-key" : "",
                   key.row === "space" ? "space-key" : "",
+                  key.side ? `${key.side}-key` : "",
+                  isShiftKey ? "shift-key" : "",
+                  isEnterKey ? "enter-key" : "",
                   key.home ? "home-key" : "",
                   isUsed ? "used-key" : "inactive-key",
                   isTarget ? "target-key" : "",
@@ -1245,7 +1345,7 @@ function Keyboard({
                 key={key.code}
                 title={fingerLabels[key.finger]}
               >
-                <span>{symbol === " " ? "Space" : symbol}</span>
+                <span>{display}</span>
               </div>
             );
           })}
