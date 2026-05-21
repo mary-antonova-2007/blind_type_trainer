@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 type LayoutId = "en-US" | "ru-RU";
-type GameMode = "campaign" | "practice" | "sprint" | "accuracy" | "challenge";
+type GameMode = "campaign" | "practice" | "sprint" | "accuracy" | "challenge" | "endless";
 type FingerId =
   | "left-pinky"
   | "left-ring"
@@ -33,6 +33,7 @@ type LevelConfig = {
   speed: number;
   errorLimit: number;
   waveLength: number;
+  lessonLineCount?: number;
 };
 
 type SessionStats = {
@@ -153,6 +154,7 @@ const modes: Array<{ id: GameMode; label: string; description: string }> = [
   { id: "sprint", label: "Спринт", description: "60 секунд с ускорением" },
   { id: "accuracy", label: "Точность", description: "Меньше права на ошибку" },
   { id: "challenge", label: "Challenge", description: "Любой текст целиком" },
+  { id: "endless", label: "Endless", description: "Фан-поток без строгого финиша" },
 ];
 
 const defaultProgress: SavedProgress = {
@@ -190,7 +192,106 @@ function unique(values: string[]) {
   return Array.from(new Set(values));
 }
 
+const campaignRows: KeyRow[] = ["home", "top", "bottom"];
+const practiceFingerGroups: Array<{ label: string; fingers: FingerId[]; onlyHome?: boolean; extras?: "index" | "index-right-pinky" | "all" }> = [
+  { label: "указательные", fingers: ["left-index", "right-index"], onlyHome: true },
+  { label: "средние", fingers: ["left-middle", "right-middle"], onlyHome: true },
+  { label: "указательные + средние", fingers: ["left-index", "right-index", "left-middle", "right-middle"], onlyHome: true },
+  { label: "безымянные", fingers: ["left-ring", "right-ring"], onlyHome: true },
+  { label: "безымянные + указательные + средние", fingers: ["left-ring", "right-ring", "left-index", "right-index", "left-middle", "right-middle"], onlyHome: true },
+  { label: "мизинцы", fingers: ["left-pinky", "right-pinky"], onlyHome: true },
+  { label: "все пальцы", fingers: ["left-pinky", "left-ring", "left-middle", "left-index", "right-index", "right-middle", "right-ring", "right-pinky"], onlyHome: true },
+  { label: "дальние для указательных", fingers: ["left-index", "right-index"], extras: "index" },
+  { label: "дальние для указательных + правый мизинец", fingers: ["left-index", "right-index", "right-pinky"], extras: "index-right-pinky" },
+  { label: "вся строка", fingers: ["left-pinky", "left-ring", "left-middle", "left-index", "right-index", "right-middle", "right-ring", "right-pinky"], extras: "all" },
+];
+
+function rowLabel(row: KeyRow) {
+  if (row === "home") return "Средняя строка";
+  if (row === "top") return "Верхняя строка";
+  if (row === "bottom") return "Нижняя строка";
+  return "Пробел";
+}
+
+function keysForLessonStep(layout: LayoutId, row: KeyRow, step: (typeof practiceFingerGroups)[number]) {
+  const rowKeys = getAllKeys().filter((key) => key.row === row && step.fingers.includes(key.finger));
+  const baseKeys =
+    row === "home" && step.onlyHome
+      ? rowKeys.filter((key) => key.home)
+      : row === "home" && step.extras === "index"
+        ? rowKeys.filter((key) => key.finger === "left-index" || key.finger === "right-index").filter((key) => !key.home)
+        : row === "home" && step.extras === "index-right-pinky"
+          ? rowKeys.filter((key) => key.finger === "left-index" || key.finger === "right-index" || (key.finger === "right-pinky" && !key.home))
+          : rowKeys;
+
+  const symbols = unique(baseKeys.map((key) => symbolForKey(key, layout)).filter((symbol) => symbol.trim().length > 0));
+  if (symbols.length > 0) return symbols;
+
+  return unique(rowKeys.map((key) => symbolForKey(key, layout)).filter((symbol) => symbol.trim().length > 0));
+}
+
+function randomItem<T>(values: T[]) {
+  return values[Math.floor(Math.random() * values.length)];
+}
+
+function lessonBlock(symbols: string[]) {
+  const length = 1 + Math.floor(Math.random() * 4);
+  return Array.from({ length }, () => randomItem(symbols)).join("");
+}
+
+function buildLessonText(symbols: string[], lineCount: number) {
+  return Array.from({ length: lineCount }, (_, lineIndex) =>
+    Array.from({ length: 8 + (lineIndex % 3) }, () => lessonBlock(symbols)).join(" "),
+  ).join("\n");
+}
+
+function makeCampaignLessons(layout: LayoutId) {
+  const lessons = campaignRows.flatMap((row, rowIndex) => {
+    const seenKeySets = new Set<string>();
+    const steps = practiceFingerGroups.flatMap((step, stepIndex) => {
+      const keySet = keysForLessonStep(layout, row, step);
+      const signature = keySet.join("");
+      if (seenKeySets.has(signature)) return [];
+      seenKeySets.add(signature);
+      return [
+        {
+          id: rowIndex * (practiceFingerGroups.length + 1) + stepIndex + 1,
+          label: `${rowLabel(row)} · ${step.label}`,
+          keySet,
+          speed: 2.8 + rowIndex * 0.35 + stepIndex * 0.08,
+          errorLimit: 2,
+          waveLength: 0,
+          lessonLineCount: 10,
+        },
+      ];
+    });
+
+    const fullRow = unique(getAllKeys().filter((key) => key.row === row).map((key) => symbolForKey(key, layout)).filter((symbol) => symbol.trim().length > 0));
+    return [
+      ...steps,
+      {
+        id: rowIndex * (practiceFingerGroups.length + 1) + practiceFingerGroups.length + 1,
+        label: `${rowLabel(row)} · финал без ошибок`,
+        keySet: fullRow,
+        speed: 3.1 + rowIndex * 0.35,
+        errorLimit: 0,
+        waveLength: 0,
+        lessonLineCount: 20,
+      },
+    ];
+  });
+
+  return lessons.map((lesson, index) => ({ ...lesson, id: index + 1 }));
+}
+
+function campaignLevelCount(layout: LayoutId) {
+  return makeCampaignLessons(layout).length;
+}
+
 function makeLevel(layout: LayoutId, id: number): LevelConfig {
+  const campaignLesson = makeCampaignLessons(layout)[id - 1];
+  if (campaignLesson) return campaignLesson;
+
   const stage = Math.ceil(id / 3);
   const baseHome = getHomeKeys(layout);
   const indexKeys = keysByFingers(layout, ["left-index", "right-index"]);
@@ -224,6 +325,7 @@ function modeLevel(base: LevelConfig, mode: GameMode): LevelConfig {
   if (mode === "sprint") return { ...base, speed: base.speed + 2.8, waveLength: 80, errorLimit: Math.max(4, base.errorLimit) };
   if (mode === "accuracy") return { ...base, speed: Math.max(2.2, base.speed - 0.8), errorLimit: Math.max(1, Math.floor(base.errorLimit / 2)), waveLength: base.waveLength + 8 };
   if (mode === "challenge") return { ...base, label: "Challenge", errorLimit: 999, speed: Math.max(2.5, base.speed - 0.6), waveLength: 0 };
+  if (mode === "endless") return { ...base, label: "Endless", errorLimit: 999, speed: base.speed + 1.4, waveLength: 140 };
   return base;
 }
 
@@ -294,11 +396,15 @@ function buildWordDrillLine(words: string[]) {
   return Array.from({ length: 6 }, (_, index) => words[index % words.length]).join(" ");
 }
 
+function isSpacingChar(char: string) {
+  return char === " " || char === "\n" || char === "\t";
+}
+
 function buildChallengeErrorDrills(errors: ChallengeError[]) {
   const groups = new Map<string, ChallengeErrorDrill>();
 
   errors.forEach((error) => {
-    if (error.expected === "\n") return;
+    if (isSpacingChar(error.expected) || isSpacingChar(error.typed)) return;
 
     const word = error.word || formatDrillChar(error.expected);
     const id = `${error.expected}\u0000${error.typed}`;
@@ -374,8 +480,38 @@ function challengeCpm(speedLevel: number) {
   return 40 + speedLevel * 24;
 }
 
-function normalizeChallengeText(text: string) {
-  return text.replace(/[«»]/g, '"').replace(/—/g, "-");
+function stripDiacritics(text: string) {
+  return text
+    .replace(/ё/g, "е")
+    .replace(/Ё/g, "Е")
+    .replace(/Й/g, "__RU_SHORT_I_UPPER__")
+    .replace(/й/g, "__RU_SHORT_I_LOWER__")
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/__RU_SHORT_I_UPPER__/g, "Й")
+    .replace(/__RU_SHORT_I_LOWER__/g, "й");
+}
+
+function normalizeChallengeText(text: string, layout: LayoutId) {
+  const normalized = stripDiacritics(text).replace(/[«»]/g, '"').replace(/—/g, "-");
+  if (layout !== "ru-RU") return normalized;
+
+  const allowedLetters = new Set(getAllKeys().map((key) => symbolForKey(key, layout)).filter((symbol) => symbol.trim().length > 0));
+  const chars: string[] = [];
+
+  Array.from(normalized).forEach((char) => {
+    const lower = char.toLowerCase();
+    if (char === " " || char === "\n" || char === "." || allowedLetters.has(lower)) {
+      chars.push(char);
+    }
+  });
+
+  return chars
+    .join("")
+    .replace(/ +/g, " ")
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\n");
 }
 
 function formatDuration(seconds: number) {
@@ -439,11 +575,12 @@ export function App() {
   const [mode, setMode] = useState<GameMode>(() => loadProgress().mode);
   const [speedLevel, setSpeedLevel] = useState(() => loadProgress().speedLevel ?? defaultProgress.speedLevel);
   const [challengeText, setChallengeText] = useState("Hello, world!\nПривет, мир!\n12345 — typing challenge.");
-  const [challengeView, setChallengeView] = useState<ChallengeViewMode>("stream");
+  const [challengeView, setChallengeView] = useState<ChallengeViewMode>("line");
   const [levelId, setLevelId] = useState(1);
   const [status, setStatus] = useState<GameStatus>("idle");
   const [stats, setStats] = useState<SessionStats>(() => newStats());
   const [queue, setQueue] = useState<string[]>([]);
+  const [sessionText, setSessionText] = useState("");
   const [headX, setHeadX] = useState(0);
   const [pulse, setPulse] = useState<{ symbol: string; kind: PulseKind; id: number } | null>(null);
   const [message, setMessage] = useState("Выбери режим и начни волну");
@@ -463,15 +600,16 @@ export function App() {
   const baseLevel = useMemo(() => makeLevel(layout, levelId), [layout, levelId]);
   const activeLevel = useMemo(() => modeLevel(baseLevel, mode), [baseLevel, mode]);
   const effectiveSpeed = useMemo(() => activeLevel.speed * speedMultiplier(speedLevel), [activeLevel.speed, speedLevel]);
-  const normalizedChallengeText = useMemo(() => normalizeChallengeText(challengeText), [challengeText]);
+  const normalizedChallengeText = useMemo(() => normalizeChallengeText(challengeText, layout), [challengeText, layout]);
   const lineChallenge = useMemo(() => buildLineChallenge(normalizedChallengeText), [normalizedChallengeText]);
-  const challengeQueue = useMemo(
-    () => (challengeView === "line" ? lineChallenge.sequence : Array.from(normalizedChallengeText.replace(/\r\n/g, "\n").replace(/\r/g, "\n"))),
-    [normalizedChallengeText, challengeView, lineChallenge.sequence],
-  );
+  const challengeQueue = useMemo(() => lineChallenge.sequence, [lineChallenge.sequence]);
   const challengeCpmValue = challengeCpm(speedLevel);
   const challengeEstimateSeconds = challengeQueue.length > 0 ? (challengeQueue.length / challengeCpmValue) * 60 : 0;
   const isChallenge = mode === "challenge";
+  const isFlowMode = mode === "endless";
+  const campaignLevels = useMemo(() => campaignLevelCount(layout), [layout]);
+  const sessionLines = useMemo(() => buildLineChallenge(sessionText), [sessionText]);
+  const keyboardSymbols = useMemo(() => new Set(Array.from(sessionText || queue.join("")).map((symbol) => symbol.toLowerCase())), [queue, sessionText]);
   const target = queue[0] ?? "";
   const targetKey = target ? keyForSymbol(target, layout) : undefined;
   const bestKey = `${layout}:${mode}:${levelId}`;
@@ -509,7 +647,7 @@ export function App() {
       setProgress((current) => {
         const nextUnlocked =
           completed && modeRef.current === "campaign"
-            ? Math.min(15, Math.max(current.unlocked[layout] ?? 1, levelId + 1))
+            ? Math.min(campaignLevels, Math.max(current.unlocked[layout] ?? 1, levelId + 1))
             : current.unlocked[layout] ?? 1;
         const nextBest = Math.max(current.best[bestKey] ?? 0, score);
         const historyItem = { date: new Date().toISOString(), layout, mode: modeRef.current, level: levelId, score, accuracy, wpm };
@@ -523,33 +661,20 @@ export function App() {
         return next;
       });
     },
-    [bestKey, layout, levelId],
+    [bestKey, campaignLevels, layout, levelId],
   );
 
   const step = useCallback(
     (deltaMs: number) => {
       if (statusRef.current !== "running" || !levelRef.current) return;
-      if (modeRef.current === "challenge" && challengeViewRef.current === "line") return;
-      const sprintBonus = modeRef.current === "sprint" ? Math.min(3.5, statsRef.current.correct * 0.08) : 0;
-      const nextX = headXRef.current - ((effectiveSpeedRef.current + sprintBonus) * deltaMs) / 1000;
+      if (modeRef.current !== "endless") return;
+      const nextX = headXRef.current - (effectiveSpeedRef.current * deltaMs) / 1000;
       headXRef.current = nextX;
       setHeadX(nextX);
       if (nextX < -60) {
         const current = queueRef.current[0];
         if (!current) return;
         const nextQueue = queueRef.current.slice(1);
-        if (modeRef.current === "challenge") {
-          const index = challengeQueue.length - queueRef.current.length;
-          const error: ChallengeError = {
-            index,
-            word: extractWordAt(normalizedChallengeText, index),
-            expected: current,
-            typed: "",
-          };
-          const nextErrors = [...challengeErrorsRef.current, error];
-          challengeErrorsRef.current = nextErrors;
-          setChallengeErrors(nextErrors);
-        }
         const nextStats = {
           ...statsRef.current,
           typed: statsRef.current.typed + 1,
@@ -564,10 +689,14 @@ export function App() {
         setHeadX(100);
         setPulse({ symbol: current, kind: "fail", id: Date.now() });
         if (nextStats.errors > levelRef.current.errorLimit) finish("lost", nextStats);
-        else if (nextQueue.length === 0) finish("won", nextStats);
+        else if (nextQueue.length === 0) {
+          const refill = makeWave(levelRef.current.keySet, levelRef.current.waveLength);
+          queueRef.current = refill;
+          setQueue(refill);
+        }
       }
     },
-    [challengeQueue.length, finish, normalizedChallengeText],
+    [finish],
   );
 
   useEffect(() => {
@@ -624,7 +753,14 @@ export function App() {
   }, [layout, speedLevel, step]);
 
   const startLevel = useCallback(() => {
-    const nextQueue = mode === "challenge" ? challengeQueue : makeWave(activeLevel.keySet, activeLevel.waveLength);
+    const nextQueue =
+      mode === "challenge"
+        ? challengeQueue
+        : mode === "campaign" && activeLevel.lessonLineCount
+          ? Array.from(buildLessonText(activeLevel.keySet, activeLevel.lessonLineCount))
+          : mode === "endless"
+            ? makeWave(activeLevel.keySet, activeLevel.waveLength)
+            : Array.from(buildLessonText(activeLevel.keySet, 10));
     if (mode === "challenge" && nextQueue.length === 0) {
       setMessage("Вставь текст для challenge");
       return;
@@ -634,6 +770,7 @@ export function App() {
     setChallengeErrors([]);
     setClockNow(nextStats.startedAt);
     setQueue(nextQueue);
+    setSessionText(nextQueue.join(""));
     setStats(nextStats);
     setHeadX(100);
     setStatus("running");
@@ -641,11 +778,11 @@ export function App() {
     queueRef.current = nextQueue;
     statsRef.current = nextStats;
     headXRef.current = 100;
-  }, [activeLevel, challengeQueue, mode]);
+  }, [activeLevel, challengeQueue, levelId, mode]);
 
   const startMistakePractice = useCallback(() => {
     const mistakeText = buildMistakePracticeText(challengeErrorDrills);
-    const nextQueue = buildLineChallenge(normalizeChallengeText(mistakeText)).sequence;
+    const nextQueue = buildLineChallenge(normalizeChallengeText(mistakeText, layout)).sequence;
     if (nextQueue.length === 0) return;
 
     const nextStats = newStats();
@@ -655,6 +792,7 @@ export function App() {
     setChallengeErrors([]);
     setClockNow(nextStats.startedAt);
     setQueue(nextQueue);
+    setSessionText(mistakeText);
     setStats(nextStats);
     setHeadX(0);
     setStatus("running");
@@ -663,7 +801,7 @@ export function App() {
     statsRef.current = nextStats;
     headXRef.current = 0;
     challengeViewRef.current = "line";
-  }, [challengeErrorDrills]);
+  }, [challengeErrorDrills, layout]);
 
   const handleInput = useCallback(
     (rawKey: string) => {
@@ -687,7 +825,10 @@ export function App() {
         setChallengeErrors(nextErrors);
       }
       const symbol = isCorrect ? queueRef.current[0] : normalized;
-      const nextQueue = isCorrect ? queueRef.current.slice(1) : queueRef.current;
+      let nextQueue = isCorrect ? queueRef.current.slice(1) : queueRef.current;
+      if (isCorrect && nextQueue.length === 0 && modeRef.current === "endless") {
+        nextQueue = makeWave(activeLevel.keySet, activeLevel.waveLength);
+      }
       const nextStreak = isCorrect ? statsRef.current.streak + 1 : 0;
       const nextStats: SessionStats = {
         ...statsRef.current,
@@ -708,7 +849,7 @@ export function App() {
       if (!isCorrect && modeRef.current !== "challenge" && nextStats.errors > activeLevel.errorLimit) finish("lost", nextStats);
       else if (isCorrect && nextQueue.length === 0) finish("won", nextStats);
     },
-    [activeLevel.errorLimit, challengeQueue.length, finish, normalizedChallengeText],
+    [activeLevel.errorLimit, activeLevel.keySet, activeLevel.waveLength, challengeQueue.length, finish, normalizedChallengeText],
   );
 
   useEffect(() => {
@@ -736,6 +877,7 @@ export function App() {
     setLevelId(1);
     setStatus("idle");
     setQueue([]);
+    setSessionText("");
     challengeErrorsRef.current = [];
     setChallengeErrors([]);
     setMessage("Раскладка изменена");
@@ -745,6 +887,7 @@ export function App() {
     setMode(nextMode);
     setStatus("idle");
     setQueue([]);
+    setSessionText("");
     challengeErrorsRef.current = [];
     setChallengeErrors([]);
     setMessage(nextMode === "challenge" ? "Вставь текст и запускай challenge" : "Режим готов");
@@ -755,6 +898,7 @@ export function App() {
     setLevelId(nextLevel);
     setStatus("idle");
     setQueue([]);
+    setSessionText("");
     challengeErrorsRef.current = [];
     setChallengeErrors([]);
     setMessage(`Выбран уровень ${nextLevel}`);
@@ -762,7 +906,7 @@ export function App() {
 
   const visibleQueue = queue.slice(0, isChallenge ? 26 : 18);
   const displayWpm = getWpm(stats, clockNow);
-  const remainingErrors = Math.max(0, activeLevel.errorLimit - stats.errors + 1);
+  const remainingErrors = Math.max(0, activeLevel.errorLimit - stats.errors);
   const canResume = status === "paused";
   const challengeProgress = isChallenge && challengeQueue.length > 0 ? Math.round((stats.correct / challengeQueue.length) * 100) : 0;
   const challengeElapsedSeconds = isChallenge && status !== "idle" ? getElapsedSeconds(stats, clockNow) : 0;
@@ -772,8 +916,8 @@ export function App() {
       ? `Средний темп ${challengeLiveCpm} зн/мин · время ${formatDuration(challengeElapsedSeconds)}`
       : null;
   const showChallengeErrorWork = isChallenge && (status === "won" || status === "lost") && challengeErrorDrills.length > 0;
-  const currentLineIndex = lineChallenge.lines.reduce((active, line, index) => (stats.correct >= line.start ? index : active), 0);
-  const shellClassName = ["app-shell", isChallenge && challengeView === "line" ? "line-challenge-shell" : ""].join(" ");
+  const currentLineIndex = sessionLines.lines.reduce((active, line, index) => (stats.correct >= line.start ? index : active), 0);
+  const shellClassName = ["app-shell", !isFlowMode ? "line-challenge-shell" : ""].join(" ");
 
   return (
     <main className={shellClassName}>
@@ -802,7 +946,7 @@ export function App() {
           ))}
         </div>
         <div className="level-picker" aria-label="Выбор уровня">
-          {Array.from({ length: 15 }, (_, index) => index + 1).map((id) => {
+          {Array.from({ length: campaignLevels }, (_, index) => index + 1).map((id) => {
             const locked = mode === "campaign" && id > unlocked;
             return (
               <button key={id} className={id === levelId ? "active" : ""} disabled={locked} onClick={() => selectLevel(id)}>
@@ -836,41 +980,13 @@ export function App() {
         <section className="challenge-panel">
           <label>
             <strong>Текст challenge</strong>
-            <div className="challenge-view-switch" aria-label="Режим набора challenge">
-              <button
-                type="button"
-                className={challengeView === "stream" ? "active" : ""}
-                onClick={() => {
-                  setChallengeView("stream");
-                  setStatus("idle");
-                  setQueue([]);
-                  challengeErrorsRef.current = [];
-                  setChallengeErrors([]);
-                }}
-              >
-                Поток
-              </button>
-              <button
-                type="button"
-                className={challengeView === "line" ? "active" : ""}
-                onClick={() => {
-                  setChallengeView("line");
-                  setStatus("idle");
-                  setQueue([]);
-                  challengeErrorsRef.current = [];
-                  setChallengeErrors([]);
-                  setHeadX(0);
-                }}
-              >
-                Строки
-              </button>
-            </div>
             <textarea
               value={challengeText}
               onChange={(event) => {
                 setChallengeText(event.currentTarget.value);
                 setStatus("idle");
                 setQueue([]);
+                setSessionText("");
                 challengeErrorsRef.current = [];
                 setChallengeErrors([]);
               }}
@@ -891,8 +1007,8 @@ export function App() {
       <section className="arena" aria-label="Игровое поле">
         <div className="radar">
           <div className="scanline" />
-          {isChallenge && challengeView === "line" ? (
-            <ChallengeLineReader lines={lineChallenge.lines} cursor={stats.correct} currentLineIndex={currentLineIndex} />
+          {!isFlowMode ? (
+            <ChallengeLineReader lines={sessionLines.lines} cursor={stats.correct} currentLineIndex={currentLineIndex} />
           ) : (
             <>
               <div className="target-zone" />
@@ -920,7 +1036,7 @@ export function App() {
           <Metric label="Точность" value={formatPercent(getAccuracy(stats))} />
           <Metric label="WPM" value={displayWpm.toString()} />
           <Metric label="Комбо" value={stats.streak.toString()} />
-          <Metric label="Ошибки" value={isChallenge ? stats.errors.toString() : `${stats.errors}/${activeLevel.errorLimit + 1}`} />
+          <Metric label="Ошибки" value={isChallenge ? stats.errors.toString() : `${stats.errors}/${activeLevel.errorLimit}`} />
           <Metric label="Лучший" value={bestScore.toString()} />
         </div>
       </section>
@@ -984,7 +1100,7 @@ export function App() {
         </section>
       )}
 
-      <Keyboard layout={layout} target={target} pulse={pulse} />
+      <Keyboard layout={layout} target={target} activeSymbols={keyboardSymbols} pulse={pulse} />
 
       <section className="finger-legend">
         {(Object.keys(fingerLabels) as FingerId[]).map((finger) => (
@@ -1055,7 +1171,17 @@ function ChallengeLineReader({
   );
 }
 
-function Keyboard({ layout, target, pulse }: { layout: LayoutId; target: string; pulse: { symbol: string; kind: PulseKind; id: number } | null }) {
+function Keyboard({
+  layout,
+  target,
+  activeSymbols,
+  pulse,
+}: {
+  layout: LayoutId;
+  target: string;
+  activeSymbols: Set<string>;
+  pulse: { symbol: string; kind: PulseKind; id: number } | null;
+}) {
   const targetLower = target.toLowerCase();
   return (
     <section className="keyboard" aria-label="Экранная клавиатура">
@@ -1063,8 +1189,10 @@ function Keyboard({ layout, target, pulse }: { layout: LayoutId; target: string;
         <div className={`key-row row-${rowIndex}`} key={rowIndex}>
           {row.map((key) => {
             const symbol = symbolForKey(key, layout);
-            const isTarget = symbol.toLowerCase() === targetLower;
-            const isPulse = pulse?.symbol.toLowerCase() === symbol.toLowerCase();
+            const symbolLower = symbol.toLowerCase();
+            const isTarget = symbolLower === targetLower;
+            const isUsed = activeSymbols.has(symbolLower);
+            const isPulse = pulse?.symbol.toLowerCase() === symbolLower;
             const style = { "--finger-color": fingerColors[key.finger] } as CSSProperties;
             return (
               <div
@@ -1072,6 +1200,7 @@ function Keyboard({ layout, target, pulse }: { layout: LayoutId; target: string;
                   "key",
                   key.row === "space" ? "space-key" : "",
                   key.home ? "home-key" : "",
+                  isUsed ? "used-key" : "inactive-key",
                   isTarget ? "target-key" : "",
                   isPulse ? `pulse-${pulse?.kind}` : "",
                 ].join(" ")}
