@@ -294,6 +294,20 @@ h1 {
   background-size: 56px 56px;
 }
 
+.radar-fail {
+  animation: radarFail 180ms ease-out;
+}
+
+.radar-fail::after {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: rgba(217, 79, 102, 0.16);
+  content: "";
+  pointer-events: none;
+  animation: failFieldFlash 180ms ease-out;
+}
+
 .scanline {
   position: absolute;
   inset: 0;
@@ -347,6 +361,64 @@ h1 {
   border-style: dashed;
   color: #7fd8ca;
   font-size: 20px;
+}
+
+.symbol-burst {
+  position: absolute;
+  top: 50%;
+  left: 78px;
+  z-index: 3;
+  width: 46px;
+  height: 54px;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.symbol-burst span {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid #ffffff;
+  border-radius: 8px;
+  background: rgba(127, 216, 202, 0.34);
+  color: #ffffff;
+  font-size: 28px;
+  font-weight: 900;
+  box-shadow: 0 0 34px rgba(127, 216, 202, 0.72);
+  animation: symbolBurst 260ms ease-out forwards;
+}
+
+.symbol-burst i {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #7fd8ca;
+  box-shadow: 0 0 12px rgba(127, 216, 202, 0.95);
+  animation: burstParticle 280ms ease-out forwards;
+}
+
+.symbol-burst i:nth-child(2) {
+  --burst-x: -28px;
+  --burst-y: -24px;
+}
+
+.symbol-burst i:nth-child(3) {
+  --burst-x: 30px;
+  --burst-y: -18px;
+}
+
+.symbol-burst i:nth-child(4) {
+  --burst-x: -22px;
+  --burst-y: 24px;
+}
+
+.symbol-burst i:nth-child(5) {
+  --burst-x: 26px;
+  --burst-y: 22px;
 }
 
 .line-reader {
@@ -729,6 +801,57 @@ h1 {
     background: #d94f66;
     transform: translateY(2px) scale(0.96);
     box-shadow: 0 0 24px rgba(217, 79, 102, 0.72);
+  }
+}
+
+@keyframes symbolBurst {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  62% {
+    opacity: 0.9;
+    transform: scale(1.35);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.55);
+  }
+}
+
+@keyframes burstParticle {
+  0% {
+    opacity: 0.95;
+    transform: translate(-50%, -50%) scale(0.8);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(calc(-50% + var(--burst-x)), calc(-50% + var(--burst-y))) scale(0.2);
+  }
+}
+
+@keyframes radarFail {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-4px);
+  }
+  60% {
+    transform: translateX(4px);
+  }
+}
+
+@keyframes failFieldFlash {
+  0% {
+    opacity: 0;
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
   }
 }
 

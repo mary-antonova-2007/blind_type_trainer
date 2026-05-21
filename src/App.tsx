@@ -80,6 +80,8 @@ type SavedProgress = {
 };
 
 const STORAGE_KEY = "typing-arcade-progress-v1";
+const ENDLESS_START_X = 260;
+const ENDLESS_SYMBOL_STEP = 72;
 
 const fingerLabels: Record<FingerId, string> = {
   "left-pinky": "Левый мизинец",
@@ -598,6 +600,7 @@ export function App() {
   const [sessionText, setSessionText] = useState("");
   const [headX, setHeadX] = useState(0);
   const [pulse, setPulse] = useState<{ symbol: string; kind: PulseKind; id: number } | null>(null);
+  const [burst, setBurst] = useState<{ symbol: string; id: number } | null>(null);
   const [message, setMessage] = useState("Выбери режим и начни волну");
   const [clockNow, setClockNow] = useState(() => performance.now());
   const [challengeErrors, setChallengeErrors] = useState<ChallengeError[]>([]);
@@ -687,7 +690,7 @@ export function App() {
       const nextX = headXRef.current - ((effectiveSpeedRef.current * endlessAcceleration) * deltaMs) / 1000;
       headXRef.current = nextX;
       setHeadX(nextX);
-      if (nextX < -60) {
+      if (nextX < -ENDLESS_SYMBOL_STEP) {
         const current = queueRef.current[0];
         if (!current) return;
         const nextQueue = queueRef.current.slice(1);
@@ -699,8 +702,11 @@ export function App() {
         };
         queueRef.current = nextQueue;
         statsRef.current = nextStats;
+        const recoveredX = nextX + ENDLESS_SYMBOL_STEP;
+        headXRef.current = recoveredX;
         setQueue(nextQueue);
         setStats(nextStats);
+        setHeadX(recoveredX);
         setPulse({ symbol: current, kind: "fail", id: Date.now() });
         if (nextStats.errors > levelRef.current.errorLimit) finish("lost", nextStats);
         else if (nextQueue.length === 0) {
@@ -786,12 +792,13 @@ export function App() {
     setQueue(nextQueue);
     setSessionText(nextQueue.join(""));
     setStats(nextStats);
-    setHeadX(100);
+    const nextHeadX = mode === "endless" ? ENDLESS_START_X : 100;
+    setHeadX(nextHeadX);
     setStatus("running");
     setMessage("Печатай текущую цель в потоке");
     queueRef.current = nextQueue;
     statsRef.current = nextStats;
-    headXRef.current = 100;
+    headXRef.current = nextHeadX;
   }, [activeLevel, challengeQueue, levelId, mode]);
 
   const startMistakePractice = useCallback(() => {
@@ -857,7 +864,12 @@ export function App() {
       statsRef.current = nextStats;
       setQueue(nextQueue);
       setStats(nextStats);
-      if (isCorrect && modeRef.current !== "endless") {
+      if (isCorrect && modeRef.current === "endless") {
+        const recoveredX = headXRef.current + ENDLESS_SYMBOL_STEP;
+        headXRef.current = recoveredX;
+        setHeadX(recoveredX);
+        setBurst({ symbol, id: Date.now() });
+      } else if (isCorrect) {
         headXRef.current = 100;
         setHeadX(100);
       }
@@ -1021,14 +1033,23 @@ export function App() {
       )}
 
       <section className="arena" aria-label="Игровое поле">
-        <div className="radar">
+        <div className={["radar", pulse?.kind === "fail" ? "radar-fail" : ""].join(" ")}>
           <div className="scanline" />
           {!isFlowMode ? (
             <ChallengeLineReader lines={sessionLines.lines} cursor={stats.correct} currentLineIndex={currentLineIndex} />
           ) : (
             <>
               <div className="target-zone" />
-              <div className="letter-stream" style={{ transform: `translateX(${headX}%)` }}>
+              {burst && (
+                <div className="symbol-burst" key={burst.id}>
+                  <span>{streamChar(burst.symbol)}</span>
+                  <i />
+                  <i />
+                  <i />
+                  <i />
+                </div>
+              )}
+              <div className="letter-stream" style={{ transform: `translateX(${headX}px)` }}>
                 {visibleQueue.map((letter, index) => (
                   <span
                     key={`${letter}-${index}`}
