@@ -668,7 +668,8 @@ export function App() {
     (deltaMs: number) => {
       if (statusRef.current !== "running" || !levelRef.current) return;
       if (modeRef.current !== "endless") return;
-      const nextX = headXRef.current - (effectiveSpeedRef.current * deltaMs) / 1000;
+      const endlessAcceleration = 1 + Math.min(1.2, statsRef.current.correct * 0.006 + getElapsedSeconds(statsRef.current) * 0.006);
+      const nextX = headXRef.current - ((effectiveSpeedRef.current * endlessAcceleration) * deltaMs) / 1000;
       headXRef.current = nextX;
       setHeadX(nextX);
       if (nextX < -60) {
@@ -683,10 +684,8 @@ export function App() {
         };
         queueRef.current = nextQueue;
         statsRef.current = nextStats;
-        headXRef.current = 100;
         setQueue(nextQueue);
         setStats(nextStats);
-        setHeadX(100);
         setPulse({ symbol: current, kind: "fail", id: Date.now() });
         if (nextStats.errors > levelRef.current.errorLimit) finish("lost", nextStats);
         else if (nextQueue.length === 0) {
@@ -841,10 +840,12 @@ export function App() {
       };
       queueRef.current = nextQueue;
       statsRef.current = nextStats;
-      headXRef.current = isCorrect ? 100 : headXRef.current;
       setQueue(nextQueue);
       setStats(nextStats);
-      if (isCorrect) setHeadX(100);
+      if (isCorrect && modeRef.current !== "endless") {
+        headXRef.current = 100;
+        setHeadX(100);
+      }
       setPulse({ symbol, kind: isCorrect ? "success" : "fail", id: Date.now() });
       if (!isCorrect && modeRef.current !== "challenge" && nextStats.errors > activeLevel.errorLimit) finish("lost", nextStats);
       else if (isCorrect && nextQueue.length === 0) finish("won", nextStats);
