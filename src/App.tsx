@@ -118,7 +118,7 @@ const fingerColors: Record<FingerId, string> = {
 
 const keyboardRows: KeyDefinition[][] = [
   [
-    { code: "Backquote", en: "`", enShift: "~", ru: "е", ruShift: "Е", row: "number", finger: "left-pinky" },
+    { code: "Backquote", en: "`", enShift: "~", ru: "ё", ruShift: "Ё", row: "number", finger: "left-pinky" },
     { code: "Digit1", en: "1", enShift: "!", ru: "1", ruShift: "!", row: "number", finger: "left-pinky" },
     { code: "Digit2", en: "2", enShift: "@", ru: "2", ruShift: '"', row: "number", finger: "left-ring" },
     { code: "Digit3", en: "3", enShift: "#", ru: "3", ruShift: "№", row: "number", finger: "left-middle" },
